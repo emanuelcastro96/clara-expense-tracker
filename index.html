@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Finanzas Personales</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #f4f4f5; color: #18181b; }
+    header { background: #fff; padding: 1rem 1.5rem; border-bottom: 1px solid #e4e4e7;
+             display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    header h1 { font-size: 1.2rem; font-weight: 600; }
+    select { padding: .4rem .8rem; border: 1px solid #d4d4d8; border-radius: 6px;
+             font-size: .9rem; background: #fff; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+             gap: 1rem; margin-bottom: 1.5rem; }
+    .card { background: #fff; border-radius: 10px; padding: 1.2rem;
+            border: 1px solid #e4e4e7; }
+    .card .label { font-size: .8rem; color: #71717a; text-transform: uppercase;
+                   letter-spacing: .05em; }
+    .card .amount { font-size: 1.6rem; font-weight: 600; display: block; margin-top: .3rem; }
+    .card.ingresos .amount { color: #16a34a; }
+    .card.gastos   .amount { color: #dc2626; }
+    .card.balance  .amount { color: #2563eb; }
+    .grid { display: grid; grid-template-columns: 1fr 2fr; gap: 1.5rem; }
+    @media(max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+    .panel { background: #fff; border-radius: 10px; padding: 1.2rem;
+             border: 1px solid #e4e4e7; }
+    .panel h2 { font-size: .95rem; font-weight: 600; margin-bottom: 1rem; color: #3f3f46; }
+    .chart-wrap { position: relative; max-height: 300px; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th { text-align: left; padding: .6rem .8rem; background: #f4f4f5;
+         color: #71717a; font-weight: 500; font-size: .78rem;
+         text-transform: uppercase; letter-spacing: .04em; }
+    td { padding: .6rem .8rem; border-top: 1px solid #f4f4f5; }
+    tr:hover td { background: #fafafa; }
+    .monto-gasto   { color: #dc2626; font-weight: 500; }
+    .monto-ingreso { color: #16a34a; font-weight: 500; }
+    .badge { display: inline-block; padding: .15rem .5rem; border-radius: 4px;
+             font-size: .75rem; background: #f4f4f5; color: #52525b; }
+    #status { font-size: .85rem; color: #71717a; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>💰 Finanzas Personales</h1>
+  <select id="sel-month"></select>
+  <span id="status">Cargando...</span>
+</header>
+
+<main>
+  <div class="cards">
+    <div class="card ingresos">
+      <span class="label">Ingresos ARS</span>
+      <span class="amount" id="tot-ing">$0</span>
+    </div>
+    <div class="card gastos">
+      <span class="label">Gastos ARS</span>
+      <span class="amount" id="tot-gas">$0</span>
+    </div>
+    <div class="card balance">
+      <span class="label">Balance ARS</span>
+      <span class="amount" id="balance">$0</span>
+    </div>
+    <div class="card">
+      <span class="label">Movimientos</span>
+      <span class="amount" id="count">0</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Gastos por categoría</h2>
+      <div class="chart-wrap"><canvas id="pie"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Últimos movimientos</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Descripción</th><th>Categoría</th>
+              <th>Medio</th><th>Moneda</th><th>Monto</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  // ⚠️  REEMPLAZÁ con tus credenciales de Supabase
+  const SUPABASE_URL = 'https://supabase.com/dashboard/project/ecpufkfohbczscpygqsr';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVjcHVma2ZvaGJjenNjcHlncXNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMjE3NDgsImV4cCI6MjA5NjY5Nzc0OH0.yjFpwHX4qmlcBSaq7zO8Xf7Tgnyo45Yd4O2El_uBYZQ'; // anon key
+
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const COLORS = ['#6366f1','#f59e0b','#10b981','#ef4444','#3b82f6',
+                  '#ec4899','#8b5cf6','#14b8a6','#f97316','#84cc16'];
+
+  let pieChart = null;
+
+  // Poblar selector de meses
+  const sel = document.getElementById('sel-month');
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    const y = d.getFullYear(), m = d.getMonth() + 1;
+    const opt = document.createElement('option');
+    opt.value = `${y}-${String(m).padStart(2,'0')}`;
+    opt.textContent = d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+    if (i === 0) opt.selected = true;
+    sel.appendChild(opt);
+  }
+
+  sel.addEventListener('change', () => load(sel.value));
+
+  async function load(ym) {
+    document.getElementById('status').textContent = 'Cargando...';
+    const [y, m] = ym.split('-').map(Number);
+    const from = `${y}-${String(m).padStart(2,'0')}-01`;
+    const to = m === 12
+      ? `${y+1}-01-01`
+      : `${y}-${String(m+1).padStart(2,'0')}-01`;
+
+    const { data, error } = await sb
+      .from('movimientos')
+      .select('*')
+      .gte('fecha', from)
+      .lt('fecha', to)
+      .order('fecha', { ascending: false });
+
+    if (error) {
+      document.getElementById('status').textContent = 'Error: ' + error.message;
+      return;
+    }
+
+    document.getElementById('status').textContent = `${data.length} movimientos`;
+    renderCards(data);
+    renderPie(data);
+    renderTable(data);
+  }
+
+  function renderCards(data) {
+    const ing = data.filter(r => r.tipo === 'ingreso' && r.moneda === 'ARS')
+                    .reduce((s, r) => s + Number(r.monto), 0);
+    const gas = data.filter(r => r.tipo === 'gasto' && r.moneda === 'ARS')
+                    .reduce((s, r) => s + Number(r.monto), 0);
+    document.getElementById('tot-ing').textContent = fmt(ing);
+    document.getElementById('tot-gas').textContent = fmt(gas);
+    const bal = ing - gas;
+    const el = document.getElementById('balance');
+    el.textContent = fmt(Math.abs(bal));
+    el.style.color = bal >= 0 ? '#16a34a' : '#dc2626';
+    document.getElementById('count').textContent = data.length;
+  }
+
+  function renderPie(data) {
+    const cat = {};
+    data.filter(r => r.tipo === 'gasto' && r.moneda === 'ARS').forEach(r => {
+      cat[r.categoria || 'otros'] = (cat[r.categoria || 'otros'] || 0) + Number(r.monto);
+    });
+    const labels = Object.keys(cat);
+    const values = Object.values(cat);
+    if (pieChart) pieChart.destroy();
+    pieChart = new Chart(document.getElementById('pie'), {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data: values, backgroundColor: COLORS, borderWidth: 1 }] },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } }
+      }
+    });
+  }
+
+  function renderTable(data) {
+    document.getElementById('tbody').innerHTML = data.map(r => `
+      <tr>
+        <td>${r.fecha}</td>
+        <td>${r.descripcion || '—'}</td>
+        <td><span class="badge">${r.categoria || '—'}</span></td>
+        <td>${r.medio_pago || '—'}</td>
+        <td>${r.moneda}</td>
+        <td class="monto-${r.tipo}">${r.tipo === 'gasto' ? '−' : '+'}${fmt(r.monto)}</td>
+      </tr>
+    `).join('');
+  }
+
+  function fmt(n) {
+    return new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0 }).format(Math.round(n));
+  }
+
+  load(sel.value);
+</script>
+</body>
+</html>
